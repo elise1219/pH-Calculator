@@ -1,0 +1,141 @@
+# Importing libraries
+import tkinter as tk # User interface
+from tkinter import messagebox # Pop-up error windows
+from tkinter import ttk # User interface
+from tkinter import filedialog # Allows for saving image of graph output
+import numpy as np # Number and array management
+import matplotlib.pyplot as plt # Graphs
+from scipy.optimize import fsolve # Used to solve nonlinear equations
+
+# Tkinter setup for matplotlib: allows for displaying matplotlib plots within tkinter window
+# FigureCanvasTkAgg allows you to embed a matplotlib figure as a widget and allows for interaction with the matlibplots within the app
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg # Embedding of matplotlib into Tkinter window
+
+# class structure for acids
+class Acid:
+    def __init__ (self, name, pKa_list, mw):
+        self.name = name # Stores acid name
+        self.pKa_list = pKa_list # Stores acid pKa list
+        self.n_protons = len(pKa_list) # Stores length of pKa list which is the number of protons
+        self.mw = mw # Stores the mw of the acid
+
+# pH calculations
+def pH_monoprotic(acid_conc, pKa):
+    Ka = 10 ** (-pKa) # conversion of pKa to Ka
+    # coefficients of quadratic equation to solve for concentration of hydrogen ions
+    a = 1 
+    b = Ka # acid dissociation constant
+    c = -Ka * acid_conc # acid dissociation constant multiplied by initial acid concentration
+    discriminant = b**2 - 4*a*c # quadratic discriminant
+    H = (-b +np.sqrt(discriminant))/(2*a) # calculates H+ concentration
+    if H<=0: # prevents form taking log of non-positive number
+        return np.nan
+    return -np.log10(H) # calculates and returns pH
+
+def pH_diprotic(acid_conc, pKa_list):
+    Ka1, Ka2 = [10**(-pKa) for pKa in pKa_list] # converts pKa to Ka values
+    def electroneutrality(H): # Electroneutrality equation
+        denominator = H**2 + Ka1*H + Ka1*Ka2 
+        H2A = H**2 / denominator # Concentration of fully protonated form
+        HA_ = Ka1*H / denominator # Concentration of singly dissociated form
+        A2_ = Ka1*Ka2 / denominator # Concentration of fully deprotonated form
+        return H - 1e-14/H - acid_conc*(HA_ + 2*A2_) # Electroneutrality equation fsolve uses to find a H+ value
+    H_found = fsolve(electroneutrality, x0 = [1e-3])[0] # Finds the H+ concentration (H) value to satisfy the electroneutrality equation, starting at 1e-3 and taking the first output that satisfies the electroneutrality equation
+    if H_found<=0: # prevents form taking log of non-positive number
+        return np.nan
+    return -np.log10(H_found) # Calculates for pH
+
+def pH_triprotic(acid_conc, pKa_list):
+    Ka1, Ka2, Ka3 = [10**(-pKa) for pKa in pKa_list] # converts pKa to Ka values
+    def electroneutrality(H): # Electroneutrality equation
+        denominator = (H**3 + Ka1*H**2 + Ka1*Ka2*H + Ka1*Ka2*Ka3)
+        AH3 = H**3 / denominator # Concentration of fully protonated form
+        AH2 = Ka1*H**2 / denominator # Concentration of singly dissociated form
+        AH1 = Ka1*Ka2*H / denominator # Concentration of doubly dissociated form
+        A = Ka1*Ka2*Ka3 / denominator # Concentration of fully deprotonated form
+        return H - 1e-14/H - acid_conc*(AH2 + 2*AH1 + 3*A) # Electroneutrality balance that fsolve uses to find an H+ value
+    H_found = fsolve(electroneutrality, x0 = [1e-3])[0] # Finds the H+ concentration (H) value to satisfy the electroneutrality equation, starting at 1e-3 and taking the first output that satisfies electroneutrality.
+    if H_found<=0: # prevents form taking log of non-positive number
+        return np.nan
+    return -np.log10(H_found) # Calculates pH
+
+def plot_pH(): # Defines what happens when the plot button is pressed
+    try:
+        acid_name = name_entry.get() # Get the acid name from the GUI
+        pka_list = [float(x.strip()) for x in pka_entry.get().split(',')] # Reads the pKa values as a list from the GUI
+        mw = float(mw_entry.get()) # Get molecular weight GUI
+        acid = Acid(acid_name, pka_list, mw) # Creates acid object
+        Conc_values_w_w = np.linspace(0,100,201) # Creates an array from 0-100% w/w with 201 points
+        Conc_values_molarity = (Conc_values_w_w / 100) * 1000 / acid.mw # Converting of % w/w to molarity (mol/L), assumption that 1 L = 1000g for diluted solutions
+        pH_results = [] # Stores pH values
+        for acid_conc in Conc_values_molarity: # Loops over each concentration
+            if acid.n_protons == 1: 
+                pH = pH_monoprotic(acid_conc, acid.pKa_list[0]) # Calculates pH for monoprotic acid
+            elif acid.n_protons == 2: 
+                pH = pH_diprotic(acid_conc, acid.pKa_list) # Calculates pH for diprotic acid
+            elif acid.n_protons == 3:
+                pH = pH_triprotic(acid_conc, acid.pKa_list) # Calculates pH for triprotic acid
+            else:
+                pH = np.nan # Returns an error for acids inputted with more than 3 protons
+            pH_results.append(pH) # Stores pH results for each concentration
+            
+        global last_figure, last_xdata, last_ydata #Updates a variable on a global level so another function can use it and recieve the updated input
+
+        # Plotting pH vs concentration curve
+        fig, ax = plt.subplots(figsize = (7,4)) # Creates a plot
+        ax.plot(Conc_values_w_w, pH_results, label=f'Theoretical pH of ({acid.name})', color='magenta') 
+        ax.set_xlabel('Acid Concentration (% w/w)')
+        ax.set_ylabel('pH')
+        ax.set_title(f'pH vs Acid Concentration for {acid.name}')
+        ax.set_xlim(0,100)
+        ax.legend()
+        ax.grid(True) # Adds a grid to the plot
+        last_figure = fig # Saves the figure
+        last_xdata = Conc_values_w_w # Saves the x values
+        last_ydata = pH_results # Saves the y values
+
+        # Show plot in Tkinter window
+        canvas = FigureCanvasTkAgg(fig, master=root) # Creates a canvas inside the Tkinter window
+        canvas.draw() # Tells matplotlib to draw the plot on the canvas
+        canvas.get_tk_widget().grid(row=6, column=0, columnspan=2) # Turns the canvas into a widget and tells tkinter where to put the widget
+        plt.close(fig) # Prevents extra pop-ups
+
+    except Exception as e:  # If any error happens in the code above, it will run the following code instead of stopping the program. As e will cpatur ethe error so it can be displayed.
+        messagebox.showerror('Input Error', f'Exception:\n{e}') # Creates a pop up window that shows the error to the user
+
+def save_plot():
+    # Ask user where to save the file
+    file = filedialog.asksaveasfilename(defaultextension = '*.png', filetypes=[('JPEG files','*.jpg;*.jpeg'),('PNG files','.png'),('All files','*.*')], title = 'Save plot as...') # Pops up a file save window and offers file type options. Titles the window 'Save plot as...'
+    if file and last_figure: # Only saves if a file was chosen and figure exsists
+        last_figure.savefig(file) # Saves the plot into the specified file
+
+def disclaimer(): # Displays the disclaimer
+    disclaimer_text = 'Disclaimer:\n\nThis program provides theoretical predictions of solution pH based\non entered acid dissociation constants (pKa values), molecular weights, and concentrations.\n\nThe calculations assume ideal, dilute aqueous solutions at 25°C, without corrections for ionic strength,\nprecise density, temperature variation, carbon dioxide absorption, or other real-world factors.\n\nActual pH values measured in laboratory or industrial settings may differ\ndue to these and other variables.\n \nThis tool is intended for educational and illustrative purposes only and\nshould not be relied upon for safety-critical, regulatory, or process control decisions\nwithout independent validation and laboratory measurement.\n \nUse at your own risk.'
+    messagebox.showinfo('Disclaimer', disclaimer_text) 
+        
+# Tkinter GUI
+root = tk.Tk() # Create root window
+root.title('Acid pH Plot') # Sets window title
+
+ttk.Label(root, text='Acid name (e.g. Citric Acid):').grid(row=0, column=0, sticky='w') # Adds a label in the first row and column of the window
+# sticky = 'w' aligns the label to the left side of the cell, other inputs can be 'n','s','w','e' for north, south, west, east
+name_entry = ttk.Entry(root, width=25) # Text entry field
+name_entry.grid(row=0, column=1, pady=2) # pady=2 adds vertical padding for readability
+
+ttk.Label(root, text='pKa values (e.g. 1.24, 3.54, 6.2):').grid(row=1, column=0, sticky='w') # Label for pKa values
+pka_entry = ttk.Entry(root, width=25) # Entry box
+pka_entry.grid(row=1, column=1, pady=2)
+
+ttk.Label(root, text='Molecular wieght (g/mol) (e.g. 124.32):').grid(row=2, column=0, sticky='w') # Label for mw
+mw_entry = ttk.Entry(root, width = 25) # Entry box
+mw_entry.grid(row=2, column=1, pady=2)
+
+plot_button = ttk.Button(root, text='Plot pH curve', command=plot_pH) # Creates a clicker button, when clicked it runs the dunction plot_pH
+plot_button.grid(row=3, column=0, columnspan=2, pady=10)
+
+save_button = ttk.Button(root, text='Save plot', command=save_plot)
+save_button.grid(row=4, column=0, columnspan = 2, pady=10)
+
+info_button = ttk.Button(root, text='Disclaimer', command=disclaimer)
+info_button.grid(row=5, column=0, columnspan=2, pady=10)
+root.mainloop() # Starts GUI
